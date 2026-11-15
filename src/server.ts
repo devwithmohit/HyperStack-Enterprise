@@ -4,12 +4,15 @@ import './config/env.js'
 import { buildApp } from './app.js'
 import { env } from './config/env.js'
 import { logger } from './config/logger.js'
+import { connectDatabase, disconnectDatabase } from './config/database.js'
 import { toError } from './utils/index.js'
 import type { FastifyInstance } from 'fastify'
 
 // ── Server start ─────────────────────────────────────────────────────────────
 
 async function start(): Promise<FastifyInstance> {
+  await connectDatabase()
+
   const app = await buildApp()
 
   await app.listen({ port: env.port, host: env.host })
@@ -30,6 +33,7 @@ function registerShutdownHandlers(app: FastifyInstance): void {
 
     try {
       await app.close()
+      await disconnectDatabase()
       logger.info({ signal }, 'Server closed cleanly. Goodbye 👋')
       process.exit(0)
     } catch (err) {

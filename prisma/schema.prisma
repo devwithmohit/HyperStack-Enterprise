@@ -1,0 +1,82 @@
+// Prisma schema for HyperStack Enterprise
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  USER
+  GUEST
+}
+
+enum BookingStatus {
+  PENDING    // created but not yet confirmed
+  CONFIRMED  // payment captured / seat locked
+  CANCELLED  // user or system cancelled
+  COMPLETED  // event/service fulfilled
+  FAILED     // payment or processing failed
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  bookings Booking[]
+
+  @@index([email])
+  @@map("users")
+}
+
+/// Booking represents a high-concurrency reservation/transaction entry.
+/// Designed for optimistic-concurrency control via the `version` field:
+///   UPDATE bookings SET status = 'CONFIRMED', version = version + 1
+///   WHERE id = $id AND version = $expectedVersion
+/// This prevents double-booking without serialisable isolation overhead.
+model Booking {
+  id        String        @id @default(cuid())
+  userId    String
+  status    BookingStatus @default(PENDING)
+
+  /// Seat / slot / resource being reserved — domain-agnostic string key.
+  resourceId String
+
+  /// Monetary amount in the smallest currency unit (e.g. paise, cents).
+  amountMinorUnits Int @default(0)
+
+  /// Currency ISO-4217 code, e.g. "INR", "USD".
+  currency String @default("USD") @db.VarChar(3)
+
+  /// Optimistic-lock version counter — increment on every write.
+  version Int @default(0)
+
+  /// Optional free-form metadata (payment reference, seat label, etc.)
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([resourceId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("bookings")
+}
