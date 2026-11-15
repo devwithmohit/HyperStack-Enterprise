@@ -1,30 +1,64 @@
+// ── Bootstrap: env validation must run before anything else ─────────────────
+import './config/env.js'
+
 import { buildApp } from './app.js'
-import { config } from './config/index.js'
+import { env } from './config/env.js'
+import { logger } from './config/logger.js'
 import { toError } from './utils/index.js'
+import type { FastifyInstance } from 'fastify'
 
-async function main(): Promise<void> {
+// ── Server start ─────────────────────────────────────────────────────────────
+
+async function start(): Promise<FastifyInstance> {
   const app = await buildApp()
 
-  try {
-    await app.listen({ port: config.port, host: config.host })
-    app.log.info(
-      `🚀 hyperstack-enterprise running on http://${config.host}:${config.port}`,
-    )
-  } catch (err) {
-    app.log.error(toError(err), 'Server failed to start')
-    process.exit(1)
+  await app.listen({ port: env.port, host: env.host })
+
+  logger.info(
+    { port: env.port, host: env.host, nodeEnv: env.nodeEnv },
+    `🚀  hyperstack-enterprise is running`,
+  )
+
+  return app
+}
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+function registerShutdownHandlers(app: FastifyInstance): void {
+  const shutdown = async (signal: string): Promise<void> => {
+    logger.info({ signal }, 'Shutdown signal received — closing server…')
+
+    try {
+      await app.close()
+      logger.info({ signal }, 'Server closed cleanly. Goodbye 👋')
+      process.exit(0)
+    } catch (err) {
+      logger.error({ err: toError(err), signal }, 'Error during graceful shutdown')
+      process.exit(1)
+    }
   }
+
+  process.once('SIGTERM', () => void shutdown('SIGTERM'))
+  process.once('SIGINT',  () => void shutdown('SIGINT'))
 }
 
-// Graceful shutdown
-const shutdown = async (signal: string) => {
-  const app = await buildApp()
-  app.log.info(`Received ${signal} — shutting down gracefully…`)
-  await app.close()
-  process.exit(0)
-}
+// ── Unhandled rejection / exception safety net ───────────────────────────────
 
-process.on('SIGTERM', () => void shutdown('SIGTERM'))
-process.on('SIGINT', () => void shutdown('SIGINT'))
+process.on('unhandledRejection', (reason) => {
+  logger.error({ reason }, 'Unhandled promise rejection — shutting down')
+  process.exit(1)
+})
 
-void main()
+process.on('uncaughtException', (err) => {
+  logger.error({ err }, 'Uncaught exception — shutting down')
+  process.exit(1)
+})
+
+// ── Entry point ──────────────────────────────────────────────────────────────
+
+start()
+  .then(registerShutdownHandlers)
+  .catch((err) => {
+    logger.error({ err: toError(err) }, 'Server failed to start')
+    process.exit(1)
+  })
