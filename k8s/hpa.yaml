@@ -1,0 +1,96 @@
+---
+# ── HorizontalPodAutoscaler ────────────────────────────────────────────────────
+# Scales hyperstack-enterprise pods between minReplicas and maxReplicas
+# based on observed CPU and Memory utilization.
+#
+# Requirements:
+#   • metrics-server must be installed in the cluster:
+#       kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#
+#   • For custom metrics (request-rate, queue depth) install KEDA:
+#       https://keda.sh/docs/latest/deploy/
+#
+# Scaling behaviour:
+#   Scale-OUT (add pods) : fast — triggered within one evaluation window (30 s).
+#   Scale-IN  (remove pods): slow — 5 min stabilisation window prevents flapping
+#                            after a traffic burst (e.g., flash sale cool-down).
+#
+# Flash-sale override (temporarily raise the ceiling):
+#   kubectl patch hpa hyperstack-enterprise-hpa \
+#     --patch '{"spec":{"maxReplicas":50}}' -n hyperstack
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hyperstack-enterprise-hpa
+  namespace: hyperstack
+  labels:
+    app.kubernetes.io/name:       hyperstack-enterprise
+    app.kubernetes.io/component:  api
+    app.kubernetes.io/part-of:    hyperstack
+    app.kubernetes.io/managed-by: kubectl
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       hyperstack-enterprise
+
+  # ── Replica bounds ──────────────────────────────────────────────────────────
+  minReplicas: 3     # always ≥ 3 for HA across zones (matches topologySpread)
+  maxReplicas: 20    # hard ceiling — protects downstream DB / Redis connection pools
+
+  # ── Scaling metrics ─────────────────────────────────────────────────────────
+  metrics:
+    # ── CPU utilization ───────────────────────────────────────────────────────
+    # Target 60 % of the requested 250 m = 150 m per pod.
+    # Keep headroom for GC, pino serialization, and lock-retry spikes.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 60
+
+    # ── Memory utilization ────────────────────────────────────────────────────
+    # Target 70 % of the requested 256 Mi = ~179 Mi per pod.
+    # Node.js heap growth is bursty — this triggers early enough to avoid OOM.
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: 70
+
+  # ── Scaling behaviour (autoscaling/v2 stabilization windows) ───────────────
+  behavior:
+    scaleUp:
+      # Evaluate every 30 s and act immediately on sustained pressure.
+      stabilizationWindowSeconds: 30
+      policies:
+        # Add up to 4 pods per 60 s — fast enough for traffic spikes.
+        - type:          Pods
+          value:         4
+          periodSeconds: 60
+        # Or add 100 % of current replicas per 60 s — whichever is larger.
+        # This lets a 3-pod cluster double quickly under a flash-sale burst.
+        - type:          Percent
+          value:         100
+          periodSeconds: 60
+      selectPolicy: Max     # use the policy that adds the most pods
+
+    scaleDown:
+      # Wait 5 minutes of sustained low utilization before removing pods.
+      # Prevents removing pods immediately after a flash-sale peak,
+      # when load may resurge seconds later.
+      stabilizationWindowSeconds: 300
+      policies:
+        # Remove at most 1 pod per 120 s — conservative, avoids thundering herd
+        # on the remaining pods when removing from a hot cluster.
+        - type:          Pods
+          value:         1
+          periodSeconds: 120
+        # Or remove at most 10 % of replicas per 120 s.
+        - type:          Percent
+          value:         10
+          periodSeconds: 120
+      selectPolicy: Min     # use the policy that removes the fewest pods

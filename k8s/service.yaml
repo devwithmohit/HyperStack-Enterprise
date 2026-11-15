@@ -1,0 +1,66 @@
+---
+# ── ClusterIP Service ──────────────────────────────────────────────────────────
+# Exposes hyperstack-enterprise pods to other workloads within the cluster
+# (e.g., an Ingress controller, internal microservices).
+# External traffic arrives via an Ingress or LoadBalancer — not this Service.
+#
+# To expose externally during local dev:
+#   kubectl port-forward svc/hyperstack-enterprise-svc 3000:80 -n hyperstack
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: hyperstack-enterprise-svc
+  namespace: hyperstack
+  labels:
+    app.kubernetes.io/name:       hyperstack-enterprise
+    app.kubernetes.io/component:  api
+    app.kubernetes.io/part-of:    hyperstack
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    # Prometheus scrape annotations (if using the kube-prometheus stack)
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "3000"
+    prometheus.io/path:   "/metrics"
+spec:
+  type: ClusterIP
+
+  selector:
+    app.kubernetes.io/name:      hyperstack-enterprise
+    app.kubernetes.io/component: api
+
+  ports:
+    - name:       http
+      protocol:   TCP
+      port:       80          # Service port — what callers dial
+      targetPort: http        # Named port on the container (3000)
+
+  # Preserve client IP for rate-limiting and audit logging.
+  # Only meaningful for LoadBalancer/NodePort; kept here for completeness.
+  sessionAffinity: None
+
+---
+# ── Optional: Headless Service for direct pod-to-pod discovery ───────────────
+# Used by StatefulSets or service meshes (e.g., Linkerd, Istio).
+# Remove if not needed.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: hyperstack-enterprise-headless
+  namespace: hyperstack
+  labels:
+    app.kubernetes.io/name:       hyperstack-enterprise
+    app.kubernetes.io/component:  api
+    app.kubernetes.io/part-of:    hyperstack
+spec:
+  type:      ClusterIP
+  clusterIP: None          # headless — no virtual IP, DNS returns pod IPs directly
+  selector:
+    app.kubernetes.io/name:      hyperstack-enterprise
+    app.kubernetes.io/component: api
+  ports:
+    - name:       http
+      protocol:   TCP
+      port:       3000
+      targetPort: http
