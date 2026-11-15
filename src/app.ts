@@ -1,13 +1,15 @@
 import Fastify from 'fastify'
-import { config } from './config/index.js'
+import { env } from './config/env.js'
+import { redis } from './config/redis.js'
 import { healthRoutes } from './routes/health.routes.js'
 import { requestLogger } from './middleware/request-logger.js'
+import { standardRateLimiter } from './middleware/rate-limiter.js'
 
 export async function buildApp() {
   const app = Fastify({
     logger: {
-      level: config.logLevel,
-      ...(config.isDev
+      level: env.logLevel,
+      ...(env.isDev
         ? {
             transport: {
               target: 'pino-pretty',
@@ -20,11 +22,17 @@ export async function buildApp() {
           }
         : {}),
     },
+    // Fastify sets X-Forwarded-For automatically when behind a proxy.
+    // Set to the number of trusted proxy hops in production.
+    trustProxy: env.isDev ? false : 1,
     disableRequestLogging: true, // We handle it ourselves
   })
 
   // ── Hooks ───────────────────────────────────────────────────────────────────
+  // Order matters: logger first so every request is traced, rate-limiter
+  // second so 429s are still logged before being rejected.
   app.addHook('onRequest', requestLogger)
+  app.addHook('onRequest', standardRateLimiter(redis))
 
   // ── Routes ──────────────────────────────────────────────────────────────────
   await app.register(healthRoutes)
