@@ -6,6 +6,8 @@ import { env } from './config/env.js'
 import { logger } from './config/logger.js'
 import { connectDatabase, disconnectDatabase } from './config/database.js'
 import { connectRedis, disconnectRedis } from './config/redis.js'
+import { startWorkers, stopWorkers } from './workers/index.js'
+import { closeEmailQueue } from './queues/email.queue.js'
 import { toError } from './utils/index.js'
 import type { FastifyInstance } from 'fastify'
 
@@ -14,6 +16,7 @@ import type { FastifyInstance } from 'fastify'
 async function start(): Promise<FastifyInstance> {
   await connectDatabase()
   await connectRedis()
+  startWorkers()
 
   const app = await buildApp()
 
@@ -35,6 +38,8 @@ function registerShutdownHandlers(app: FastifyInstance): void {
 
     try {
       await app.close()
+      await stopWorkers()
+      await closeEmailQueue()
       await disconnectDatabase()
       await disconnectRedis()
       logger.info({ signal }, 'Server closed cleanly. Goodbye 👋')
