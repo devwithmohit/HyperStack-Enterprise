@@ -1,11 +1,8 @@
 /**
  * Booking Controller — thin HTTP adapter layer.
  *
- * Responsibilities:
- *  • Extract and validate request data (body, params, query).
- *  • Delegate business logic entirely to BookingService.
- *  • Shape HTTP responses (status codes, bodies).
- *  • Never contain business logic itself.
+ * Uses response helpers (ok, created, paginated) for every success response
+ * so the entire API surface produces a consistent envelope.
  */
 
 import type { FastifyRequest, FastifyReply } from 'fastify'
@@ -23,6 +20,7 @@ import {
   listUserBookings,
   cancelBooking,
 } from '../services/booking.service.js'
+import { ok, created, paginated } from '../utils/response.js'
 
 // ── Stubbed auth helper ───────────────────────────────────────────────────────
 // Replace with real JWT / session extraction when auth is implemented.
@@ -42,7 +40,7 @@ function getRequestUser(_req: FastifyRequest): RequestUser {
   }
 }
 
-// ── POST /bookings ────────────────────────────────────────────────────────────
+// ── POST /api/v1/bookings ─────────────────────────────────────────────────────
 
 export async function createBookingHandler(
   req: FastifyRequest,
@@ -58,14 +56,10 @@ export async function createBookingHandler(
     userName:  user.name,
   })
 
-  await reply.code(201).send({
-    success:              true,
-    data:                 booking,
-    confirmationQueued:   queued,
-  })
+  await created(reply, { booking, confirmationQueued: queued }, 'Booking confirmed')
 }
 
-// ── GET /bookings/:bookingId ──────────────────────────────────────────────────
+// ── GET /api/v1/bookings/:bookingId ──────────────────────────────────────────
 
 export async function getBookingHandler(
   req: FastifyRequest,
@@ -74,10 +68,10 @@ export async function getBookingHandler(
   const { bookingId } = validate(BookingParamsSchema, req.params)
   const booking       = await getBookingById(bookingId)
 
-  await reply.code(200).send({ success: true, data: booking })
+  await ok(reply, booking)
 }
 
-// ── GET /users/:userId/bookings ───────────────────────────────────────────────
+// ── GET /api/v1/users/:userId/bookings ───────────────────────────────────────
 
 export async function listBookingsHandler(
   req: FastifyRequest,
@@ -88,18 +82,14 @@ export async function listBookingsHandler(
 
   const { bookings, total } = await listUserBookings(userId, query)
 
-  await reply.code(200).send({
-    success: true,
-    data:    bookings,
-    meta: {
-      total,
-      limit:  query.limit,
-      offset: query.offset,
-    },
+  await paginated(reply, bookings, {
+    total,
+    limit:  query.limit,
+    offset: query.offset,
   })
 }
 
-// ── DELETE /bookings/:bookingId ───────────────────────────────────────────────
+// ── DELETE /api/v1/bookings/:bookingId ───────────────────────────────────────
 
 export async function cancelBookingHandler(
   req: FastifyRequest,
@@ -111,5 +101,5 @@ export async function cancelBookingHandler(
 
   const booking = await cancelBooking(bookingId, user.id, reason)
 
-  await reply.code(200).send({ success: true, data: booking })
+  await ok(reply, booking, { message: 'Booking cancelled' })
 }
