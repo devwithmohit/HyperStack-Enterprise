@@ -1,0 +1,2 @@
+Load test JSON results are written here by k6's handleSummary().
+This file exists only to make git track the results/ directory.
